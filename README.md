@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-Android-green.svg)
 ![Min SDK](https://img.shields.io/badge/Min%20SDK-24-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-purple.svg)
-[![CodeQL Advanced](https://github.com/carsaimz/carsailms/actions/workflows/codeql.yml/badge.svg)](https://github.com/carsaimz/carsailms/actions/workflows/codeql.yml)
+[![CodeQL Advanced](https://github.com/carsaimz/carsailms-app/actions/workflows/codeql.yml/badge.svg)](https://github.com/carsaimz/carsailms-app/actions/workflows/codeql.yml)
 
 **Carsai LMS** é um aplicativo Android nativo para acesso ao sistema de gestão de aprendizagem Carsai LMS.
 
@@ -35,9 +35,9 @@ _Em breve_
 
 ### Última Versão
 
-[![Download APK](https://img.shields.io/badge/Download-APK-brightgreen.svg)](https://github.com/carsaimz/carsailms/releases/latest)
+[![Download APK](https://img.shields.io/badge/Download-APK-brightgreen.svg)](https://github.com/carsaimz/carsailms-app/releases/latest)
 
-Baixe a versão mais recente na página de [Releases](https://github.com/carsaimz/carsailms/releases).
+Baixe a versão mais recente na página de [Releases](https://github.com/carsaimz/carsailms-app/releases).
 
 ## 🔧 Compilação
 
@@ -51,8 +51,8 @@ Baixe a versão mais recente na página de [Releases](https://github.com/carsaim
 
 1. Clone o repositório:
 ```bash
-git clone https://github.com/carsaimz/carsailms.git
-cd carsailms
+git clone https://github.com/carsaimz/carsailms-app.git
+cd carsailms-app
 ```
 
 2. Configure Firebase:
@@ -122,7 +122,7 @@ Contribuições são bem-vindas! Por favor:
 
 ## 🐛 Reportar Bugs
 
-Encontrou um bug? [Abra uma issue](https://github.com/carsaimz/carsailms/issues/new) com:
+Encontrou um bug? [Abra uma issue](https://github.com/carsaimz/carsailms-app/issues/new) com:
 - Descrição detalhada
 - Passos para reproduzir
 - Versão do Android
