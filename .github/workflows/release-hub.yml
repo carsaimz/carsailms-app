@@ -63,6 +63,7 @@ jobs:
       build: ${{ steps.decide.outputs.build }}
     steps:
       - name: Versão da fonte privada vs última release do hub
+        id: decide
         env:
           GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
           FORCE: ${{ github.event.inputs.force || 'false' }}
