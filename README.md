@@ -1,151 +1,65 @@
-# 📱 Carsai LMS - Android App
+# Carsai LMS — App Releases 🚀
 
-![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Android-green.svg)
-![Min SDK](https://img.shields.io/badge/Min%20SDK-24-orange.svg)
-![License](https://img.shields.io/badge/license-MIT-purple.svg)
-[![CodeQL Advanced](https://github.com/carsaimz/carsailms-app/actions/workflows/codeql.yml/badge.svg)](https://github.com/carsaimz/carsailms-app/actions/workflows/codeql.yml)
+**Hub público de distribuição das apps da plataforma [Carsai LMS](https://carsailms.vercel.app).**
+**Public distribution hub for the Carsai LMS platform apps.**
 
-**Carsai LMS** é um aplicativo Android nativo para acesso ao sistema de gestão de aprendizagem Carsai LMS.
+> PT: Os binários oficiais (Android / Windows / Linux) vivem nas **Releases** deste
+> repositório, cada uma com o **CHANGELOG da própria versão** no corpo — qualquer
+> pessoa pode baixar aqui no GitHub ou pela página oficial
+> [carsailms.vercel.app/download-app](https://carsailms.vercel.app/download-app).
+>
+> EN: Official binaries (Android / Windows / Linux) live in this repository's
+> **Releases**, each with the **per-version CHANGELOG** in its body — anyone can
+> download here on GitHub or from the official download page.
 
-## ✨ Funcionalidades
+## Downloads / Releases
 
-- 🔗 **Deep Linking** - Abre automaticamente ao acessar links do site
-- 📥 **Downloads Organizados** - Salva arquivos na pasta "Carsai LMS"
-- 🌐 **Links Inteligentes** - Abre links externos em apps apropriados (WhatsApp, Drive, YouTube)
-- 📤 **Upload de Arquivos** - Suporte completo para upload de imagens, vídeos e documentos
-- 🔥 **Firebase Integrado** - Analytics, Messaging e Remote Config
-- 🎨 **Modo Escuro** - Tema claro, escuro ou seguir sistema
-- 🌍 **Multilíngue** - Português e Inglês
-- 🔄 **Atualizações Automáticas** - Verificação de novas versões via GitHub
-- 📱 **Responsivo** - Suporte a orientação landscape para vídeos
-- 🚀 **Performance** - WebView otimizado com cache inteligente
+| Canal | Ficheiro | Origem |
+|---|---|---|
+| Android (estável) | `CarsaiLMS-vX.Y.Z-release.apk` | release assinada |
+| Android (beta) | `CarsaiLMS-vX.Y.Z-beta.apk` | build mais recente |
+| Windows (instalador) | `CarsaiLMS-Setup-vX.Y.Z.exe` | Electron NSIS |
+| Windows (portátil) | `CarsaiLMS-Portable-vX.Y.Z.exe` | Electron portable |
+| Linux (AppImage) | `CarsaiLMS-X.Y.Z-x86_64.AppImage` | Electron AppImage |
+| Linux (.deb) | `CarsaiLMS-X.Y.Z-amd64.deb` | Electron deb |
 
-## 📸 Screenshots
+A página da plataforma verifica automaticamente actualizações a cada 30 minutos
+e baixa dentro da própria app (`/api/app-version` → `/api/app-download`).
 
-_Em breve_
+## Como é que os builds chegam aqui / How builds land here
 
-## 📋 Requisitos
+O workflow **`release-hub`** corre **neste repositório público** (minutos ilimitados
+no plano free — o repo privado está sujeito à quota mensal):
 
-- Android 7.0 (API 24) ou superior
-- Conexão à internet
-- ~10MB de espaço livre
+1. **Gatilho**: a cada 2 h (schedule) ou manualmente (workflow_dispatch, input
+   `force` para reconstruir).
+2. **Fonte**: faz checkout do código-fonte em [`carsaimz/carsailms`](https://github.com/carsaimz/carsailms)
+   (privado) com o segredo `APP_GH_TOKEN`.
+3. **Constrói**: Android (Capacitor/Gradle), Windows (Electron NSIS+Portable) e
+   Linux (Electron AppImage+deb).
+4. **Publica**: release `vX.Y.Z` com os 6 ficheiros + a secção do `CHANGELOG.md`
+   dessa versão no corpo; depois registra as metas na plataforma
+   (`/api/app-release-upload`) para a página de download e o verificador de
+   actualizações.
 
-## 🚀 Download
+## Segredos / Secrets
 
-### Última Versão
+| Segredo | Obrigatório | Efeito |
+|---|---|---|
+| `APP_GH_TOKEN` | ✅ | PAT com leitura do repo privado + escrita das metas |
+| `ANDROID_KEYSTORE` + `ANDROID_KEYSTORE_PASSWORD` (+`ALIAS`) | — | APK **release assinado**; sem eles só o beta (ex-debug) é publicado |
+| `GOOGLE_SERVICES_JSON` | — | FCM nativo (push); sem ele o push segue pelo canal web |
 
-[![Download APK](https://img.shields.io/badge/Download-APK-brightgreen.svg)](https://github.com/carsaimz/carsailms-app/releases/latest)
+> Nota: o GitHub nunca expõe o valor de segredos existentes — para o APK release
+> assinado, o dono cola os mesmos valores do repo privado aqui (UI → Settings →
+> Secrets and variables → Actions).
 
-Baixe a versão mais recente na página de [Releases](https://github.com/carsaimz/carsailms-app/releases).
+## Histórico / History
 
-## 🔧 Compilação
-
-### Pré-requisitos
-
-- JDK 17
-- Android SDK 34
-- AIDE ou Android Studio
-
-### Passos
-
-1. Clone o repositório:
-```bash
-git clone https://github.com/carsaimz/carsailms-app.git
-cd carsailms-app
-```
-
-2. Configure Firebase:
-   - Crie projeto no [Firebase Console](https://console.firebase.google.com)
-   - Baixe `google-services.json`
-   - Coloque em `app/google-services.json`
-
-3. Define o caminho de chaves em `app/build.gradle` para apontar onde está `keys/release.jks`
-3. Compile:
-```bash
-./gradlew assembleRelease (se for release) ou assembleDebug (se for debug)
-```
-
-4. O APK estará em:
-```
-app/build/outputs/apk/release/app-release.apk
-```
-
-## 🔥 Configuração Firebase
-
-### Analytics
-O app registra automaticamente:
-- Abertura do app
-- Cliques em menus
-- Downloads
-- Navegação entre telas
-
-### Cloud Messaging
-- Notificações push automáticas
-- Inscrição em tópicos: `general`, `updates`
-
-### Remote Config
-Parâmetros configuráveis:
-- `maintenance_mode` - Modo manutenção
-- `force_update` - Forçar atualização
-- `min_version` - Versão mínima suportada
-
-## 📝 Changelog
-
-### v1.0.1 (Build 2) - 2025-01-24
-- ✅ Corrigido upload de arquivos
-- ✅ Adicionado menu de navegação inferior
-- ✅ Implementada verificação de atualizações via GitHub
-- ✅ Melhorado Firebase Analytics e Messaging
-- ✅ Corrigido deep linking com URLs específicas
-- ✅ Adicionada tela Sobre com changelog
-- ✅ Melhorada seleção de arquivos (múltiplos arquivos)
-
-### v1.0.0 (Build 1) - 2025-01-20
-- 🎉 Versão inicial
-- ✅ WebView integrado
-- ✅ Sistema de downloads
-- ✅ Modo escuro/claro
-- ✅ Suporte multilíngue
-
-**Para mais detalhes, veja [CHANGELOG](CHANGELOG.md)**
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Por favor:
-
-1. Fork o projeto
-2. Crie uma branch (`git checkout -b feature/MinhaFeature`)
-3. Commit suas mudanças (`git commit -m 'Adiciona MinhaFeature'`)
-4. Push para a branch (`git push origin feature/MinhaFeature`)
-5. Abra um Pull Request
-
-## 🐛 Reportar Bugs
-
-Encontrou um bug? [Abra uma issue](https://github.com/carsaimz/carsailms-app/issues/new) com:
-- Descrição detalhada
-- Passos para reproduzir
-- Versão do Android
-- Screenshots (se aplicável)
-
-## 📄 Licença
-
-Este projeto está sob a licença MIT. Veja [LICENSE](LICENSE) para mais detalhes.
-
-## 👥 Equipe
-
-Desenvolvido pela **Equipe CarsaiDev**
-
-- 🌐 Website: [carsailms.linkpc.net](https://carsailms.linkpc.net)
-- 📧 Email: suporte@carsai.com
-- 📱 GitHub: [@carsaimz](https://github.com/carsaimz)
-
-## 🙏 Agradecimentos
-
-- Firebase - Plataforma backend
-- Material Design - Guidelines de design
-- Todos os contribuidores
+O conteúdo antigo deste repositório (protótipo nativo Android v1.1.1) foi
+preservado na branch [`legacy/v1.1.1`](https://github.com/carsaimz/carsailms-app/tree/legacy/v1.1.1)
+e as releases de debug antigas foram removidas.
 
 ---
 
-**Feito com ❤️ pela Equipe CarsaiDev**
+© [Carsai Mozambique](https://carsailms.vercel.app) — Aprende hoje, lidera amanhã.

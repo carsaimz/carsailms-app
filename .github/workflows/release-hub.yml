@@ -1,0 +1,428 @@
+name: release-hub
+
+# Carsai LMS — HUB PÚBLICO DE RELEASES (carsaimz/carsailms-app)
+# ═══════════════════════════════════════════════════════════════════════
+# PT: Este repositório é o HUB de distribuição das apps da plataforma:
+#     os binários (APK/EXE/AppImage/deb) vivem nas RELEASES aqui, cada uma
+#     com o CHANGELOG da própria versão no corpo (dono: «Vamos escolher repo
+#     carsailms-app para assets de builds e CHANGELOG de cada versão
+#     (releases), assim qualquer um iria baixar no GitHub ou site»).
+#     Este workflow constrói a app a partir do código-fonte (repo PRIVADO
+#     carsaimz/carsailms) e publica a release vX.Y.Z aqui — sem consumir os
+#     minutos do GitHub Actions do repo privado (este repo é PÚBLICO: minutos
+#     ilimitados no plano free — resolve o bloqueio de quota de 13-10-2026).
+#
+#     Gatilhos:
+#       • workflow_dispatch (input force = construir mesmo se já publicada)
+#       • schedule a cada 2 h — auto-constrói quando a versão do package.json
+#         no repo privado ainda não tem release aqui (autónomo: o dono só
+#         faz push; o hub publica os binários sozinho)
+#
+#     A página da plataforma /download-app e a app (verificação de
+#     actualizações) leem /api/app-version → /api/app-download, que servem
+#     os assets DESTE repositório em streaming.
+#
+# EN: Public release hub — builds from the private source repo and publishes
+#     binaries + per-version changelog here. Scheduled every 2 h + manual.
+#
+# Segredos deste repo / Secrets:
+#   APP_GH_TOKEN (OBRIGATÓRIO) — PAT com acesso de leitura ao repo privado
+#     carsaimz/carsailms (checkout + package.json) e de escrita aqui (metas).
+#   ANDROID_KEYSTORE + ANDROID_KEYSTORE_PASSWORD (+ ALIAS, opcional) — se
+#     existirem, o APK release é ASSINADO e entra como «CarsaiLMS-vX.Y.Z-
+#     release.apk»; sem eles só o APK beta (ex-debug) é publicado. Copiar do
+#     repo privado quando possível (o GitHub nunca expõe valores de segredos).
+#   GOOGLE_SERVICES_JSON (opcional) — FCM nativo; sem ele o push segue pelo
+#     canal web (igual ao workflow do repo privado).
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Construir mesmo se a release já existir / Build even if release exists'
+        type: boolean
+        default: false
+  schedule:
+    # a cada 2 h, no minuto 23 — auto-publicação quando há versão nova
+    - cron: '23 */2 * * *'
+
+# vários arranques não acumulam builds em fila (o último em pé vence)
+concurrency:
+  group: release-hub
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    name: Verificar necessidade de build / Build needed?
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Versão da fonte privada vs última release do hub
+        env:
+          GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+        run: |
+          # versão no package.json do repo PRIVADO (fonte da verdade)
+          PKG=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/carsaimz/carsailms/contents/package.json?ref=main" \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{try{console.log(JSON.parse(Buffer.from(s,'base64').toString()).version)}catch(e){console.log('')}})")
+          echo "package.json (privado): $PKG"
+          # última release PUBLICADA neste hub
+          LATEST=$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{try{const j=JSON.parse(s);console.log((j.tag_name||'').replace(/^v/,''))}catch(e){console.log('')}})" || true)
+          echo "última release do hub: ${LATEST:-nenhuma}"
+          VERSION="$PKG"
+          BUILD=false
+          if [ "$FORCE" = "true" ]; then BUILD=true; echo "dispatch com force=true — construir"; fi
+          if [ -n "$VERSION" ] && [ "$VERSION" != "$LATEST" ]; then BUILD=true; fi
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { BUILD=false; echo "::warning::versão inválida ($VERSION) — nada a construir"; }
+          echo "decisão: build=$BUILD version=$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android — Capacitor (APK beta [+ release assinado])
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código-fonte (repo privado)
+        uses: actions/checkout@v7
+        with:
+          repository: carsaimz/carsailms
+          token: ${{ secrets.APP_GH_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Setup Java (Temurin 21)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Variáveis / Variables
+        id: vars
+        run: |
+          VERSION="${{ needs.gate.outputs.version }}"
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || VERSION=$(node -p "require('./package.json').version")
+          VCODE=$(node -e "const [a,b,c]='$VERSION'.split('.').map(Number); console.log(a*10000+b*100+c)")
+          [ "$VCODE" -ge 1 ] 2>/dev/null || VCODE=10000
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "vcode=$VCODE" >> $GITHUB_OUTPUT
+
+      - name: Config pública (app-config.json da plataforma) / Public config
+        run: |
+          # os valores NEXT_PUBLIC_* são PÚBLICOS por design (identificadores;
+          # a segurança vive nas regras/RLS) — o hub busca-os da plataforma em
+          # vez de duplicar segredos no repo
+          curl -fsSL https://carsailms.vercel.app/app-config.json -o /tmp/app-config.json || echo '{}' > /tmp/app-config.json
+          node -e "
+            const c = require('/tmp/app-config.json');
+            const out = [];
+            if (c.supabase) {
+              out.push('NEXT_PUBLIC_SUPABASE_URL=' + (c.supabase.url || ''));
+              out.push('NEXT_PUBLIC_SUPABASE_ANON_KEY=' + (c.supabase.anonKey || ''));
+            }
+            if (c.firebase) {
+              out.push('NEXT_PUBLIC_FIREBASE_API_KEY=' + (c.firebase.apiKey || ''));
+              out.push('NEXT_PUBLIC_FIREBASE_PROJECT_ID=' + (c.firebase.projectId || ''));
+              out.push('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=' + (c.firebase.messagingSenderId || ''));
+              out.push('NEXT_PUBLIC_FIREBASE_APP_ID=' + (c.firebase.appId || ''));
+              out.push('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=' + (c.firebase.storageBucket || ''));
+              out.push('NEXT_PUBLIC_FIREBASE_VAPID_KEY=' + (c.firebase.vapidKey || ''));
+            }
+            require('fs').appendFileSync(process.env.GITHUB_ENV, out.join('\n') + '\n');
+          "
+
+      - name: Instalar dependências / Install deps
+        run: npm install --no-audit --no-fund
+
+      - name: 🧩 Gerar bundle completo da UI (export) / Build full UI bundle
+        run: node scripts/build-app-export.mjs www
+
+      - name: 🔥 google-services.json (FCM nativo, opcional)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+            echo "google-services.json injetado — FCM nativo activo"
+          else
+            echo "Sem GOOGLE_SERVICES_JSON — push pelo canal web (comportamento padrão)"
+          fi
+
+      - name: Preparar plataforma Android (Capacitor)
+        env:
+          CARSAI_SIGNING: ${{ secrets.ANDROID_KEYSTORE != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && '1' || '0' }}
+          CAP_VERSION: ${{ steps.vars.outputs.version }}
+          CAP_VERSION_CODE: ${{ steps.vars.outputs.vcode }}
+        run: |
+          rm -rf android
+          npx cap add android
+          node scripts/cap-android-patch.mjs
+          npx cap sync android
+
+      - name: Decodificar keystore (opcional)
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > release.keystore
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "::notice::Sem keystore neste repo — só o APK beta é publicado. Para o APK release ASSINADO, copia os segredos ANDROID_KEYSTORE e ANDROID_KEYSTORE_PASSWORD do repo privado (o GitHub nunca expõe os valores — o dono cola na UI)."
+          fi
+
+      - name: 🔨 Build APK beta (Capacitor/Gradle)
+        run: |
+          cd android && ./gradlew assembleDebug --no-daemon --stacktrace
+          cd ..
+          mkdir -p output
+          mv android/app/build/outputs/apk/debug/app-debug.apk "output/CarsaiLMS-v${{ steps.vars.outputs.version }}-beta.apk"
+
+      - name: 🔨 Build APK release + AAB assinados (opcional)
+        if: steps.keystore.outputs.available == 'true'
+        run: |
+          cd android && ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace \
+            -PCARSAI_STORE_FILE="$GITHUB_WORKSPACE/release.keystore" \
+            -PCARSAI_STORE_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+            -PCARSAI_KEY_ALIAS="${{ secrets.ANDROID_KEYSTORE_ALIAS || 'carsailms' }}" \
+            -PCARSAI_KEY_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          cd ..
+          mkdir -p output
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$APK" ] && cp "$APK" "output/CarsaiLMS-v${{ steps.vars.outputs.version }}-release.apk"
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          [ -f "$AAB" ] && cp "$AAB" "output/CarsaiLMS-v${{ steps.vars.outputs.version }}-release.aab" || echo "::warning::AAB ausente — segue só o APK"
+
+      - name: 📝 CHANGELOG da versão
+        run: |
+          V="${{ steps.vars.outputs.version }}"
+          awk -v sec="## [v$V]" 'index($0,sec)==1{f=1;next} f&&/^## \[v/{exit} f' CHANGELOG.md > body.md 2>/dev/null || true
+          [ -s body.md ] || echo "Publicação v$V da plataforma Carsai LMS." > body.md
+
+      - name: 🚀 Publicar release no hub
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.vars.outputs.version }}
+          body_path: body.md
+          make_latest: true
+          files: output/*
+
+      - name: 📱 Publicar metas na plataforma
+        env:
+          APP_GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
+          UPLOAD_URL: https://carsailms.vercel.app/api/app-release-upload
+          APP_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          # metas {version,filename,size,tag,asset} → /api/app-release-upload;
+          # /api/app-download serve o asset DESTE hub em streaming
+          if [ -z "$APP_GH_TOKEN" ]; then echo "::warning::APP_GH_TOKEN ausente — metas ignoradas."; exit 0; fi
+          REL=$(ls output/*-release.apk 2>/dev/null | head -1)
+          BET=$(ls output/*-beta.apk 2>/dev/null | head -1)
+          [ -n "$REL" ] || REL="$BET"
+          if [ -z "$REL" ] && [ -z "$BET" ]; then echo "::warning::Sem APK para publicar."; exit 0; fi
+          for pair in "android:$REL" "android_beta:$BET"; do
+            export KIND="${pair%%:*}"; F="${pair#*:}"
+            [ -n "$F" ] && [ -f "$F" ] || { echo "::notice::sem ficheiro para kind=$KIND"; continue; }
+            export F
+            node -e "
+              const fs = require('fs');
+              const path = process.env.F, filename = require('path').basename(path);
+              const body = JSON.stringify({ kind: process.env.KIND, version: process.env.APP_VERSION,
+                filename, size: fs.statSync(path).size, tag: 'v' + process.env.APP_VERSION, asset: filename });
+              fetch(process.env.UPLOAD_URL, { method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.APP_GH_TOKEN }, body })
+                .then(async r => console.log(process.env.KIND, '→', r.status, (await r.text()).slice(0, 120)))
+                .catch(e => console.error(process.env.KIND, 'falhou:', e.message));
+            "
+          done
+          # espera as respostas (node async) antes de terminar o passo
+          sleep 8
+
+  desktop-win:
+    name: Windows — Electron (Setup + Portable)
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout do código-fonte (repo privado)
+        uses: actions/checkout@v7
+        with:
+          repository: carsaimz/carsailms
+          token: ${{ secrets.APP_GH_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Variáveis / Variables
+        id: vars
+        shell: bash
+        run: |
+          VERSION="${{ needs.gate.outputs.version }}"
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Alinhar versão do desktop
+        shell: bash
+        run: |
+          cd desktop
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '${{ steps.vars.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+            console.log('desktop version →', p.version);
+          "
+
+      - name: Instalar dependências do desktop
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      # v2.44: o Electron carrega a plataforma web de produção (sem export embutido)
+      - name: 🔨 Build (NSIS + Portable)
+        working-directory: desktop
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
+        run: npx electron-builder --win nsis portable --publish never
+
+      - name: 📝 CHANGELOG da versão
+        shell: bash
+        run: |
+          V="${{ steps.vars.outputs.version }}"
+          awk -v sec="## [v$V]" 'index($0,sec)==1{f=1;next} f&&/^## \[v/{exit} f' CHANGELOG.md > body.md 2>/dev/null || true
+          [ -s body.md ] || echo "Publicação v$V da plataforma Carsai LMS." > body.md
+
+      - name: 🚀 Publicar release no hub
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.vars.outputs.version }}
+          body_path: body.md
+          files: desktop/dist/*.exe
+
+      - name: 📱 Publicar metas na plataforma
+        shell: bash
+        env:
+          APP_GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
+          UPLOAD_URL: https://carsailms.vercel.app/api/app-release-upload
+          APP_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          if [ -z "$APP_GH_TOKEN" ]; then echo "::warning::APP_GH_TOKEN ausente — metas ignoradas."; exit 0; fi
+          SET=$(ls desktop/dist/*Setup*.exe 2>/dev/null | grep -vi portable | head -1)
+          POR=$(ls desktop/dist/*Portable*.exe 2>/dev/null | head -1)
+          for pair in "windows:$SET" "win_portable:$POR"; do
+            export KIND="${pair%%:*}"; F="${pair#*:}"
+            [ -n "$F" ] && [ -f "$F" ] || { echo "::notice::sem ficheiro para kind=$KIND"; continue; }
+            export F
+            node -e "
+              const fs = require('fs');
+              const path = process.env.F, filename = require('path').basename(path);
+              const body = JSON.stringify({ kind: process.env.KIND, version: process.env.APP_VERSION,
+                filename, size: fs.statSync(path).size, tag: 'v' + process.env.APP_VERSION, asset: filename });
+              fetch(process.env.UPLOAD_URL, { method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.APP_GH_TOKEN }, body })
+                .then(async r => console.log(process.env.KIND, '→', r.status, (await r.text()).slice(0, 120)))
+                .catch(e => console.error(process.env.KIND, 'falhou:', e.message));
+            "
+          done
+          sleep 8
+
+  desktop-lin:
+    name: Linux — Electron (AppImage + deb)
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código-fonte (repo privado)
+        uses: actions/checkout@v7
+        with:
+          repository: carsaimz/carsailms
+          token: ${{ secrets.APP_GH_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Variáveis / Variables
+        id: vars
+        run: |
+          VERSION="${{ needs.gate.outputs.version }}"
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Alinhar versão do desktop
+        run: |
+          cd desktop
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '${{ steps.vars.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+            console.log('desktop version →', p.version);
+          "
+
+      - name: Instalar dependências do desktop
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: 🔨 Build (AppImage + deb)
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
+        run: npx electron-builder --linux AppImage deb --publish never
+
+      - name: 📝 CHANGELOG da versão
+        run: |
+          V="${{ steps.vars.outputs.version }}"
+          awk -v sec="## [v$V]" 'index($0,sec)==1{f=1;next} f&&/^## \[v/{exit} f' CHANGELOG.md > body.md 2>/dev/null || true
+          [ -s body.md ] || echo "Publicação v$V da plataforma Carsai LMS." > body.md
+
+      - name: 🚀 Publicar release no hub
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.vars.outputs.version }}
+          body_path: body.md
+          files: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+
+      - name: 📱 Publicar metas na plataforma
+        env:
+          APP_GH_TOKEN: ${{ secrets.APP_GH_TOKEN }}
+          UPLOAD_URL: https://carsailms.vercel.app/api/app-release-upload
+          APP_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          if [ -z "$APP_GH_TOKEN" ]; then echo "::warning::APP_GH_TOKEN ausente — metas ignoradas."; exit 0; fi
+          AIM=$(ls desktop/dist/*.AppImage 2>/dev/null | head -1)
+          DEB=$(ls desktop/dist/*.deb 2>/dev/null | head -1)
+          for pair in "linux:$AIM" "lin_deb:$DEB"; do
+            export KIND="${pair%%:*}"; F="${pair#*:}"
+            [ -n "$F" ] && [ -f "$F" ] || { echo "::notice::sem ficheiro para kind=$KIND"; continue; }
+            export F
+            node -e "
+              const fs = require('fs');
+              const path = process.env.F, filename = require('path').basename(path);
+              const body = JSON.stringify({ kind: process.env.KIND, version: process.env.APP_VERSION,
+                filename, size: fs.statSync(path).size, tag: 'v' + process.env.APP_VERSION, asset: filename });
+              fetch(process.env.UPLOAD_URL, { method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.APP_GH_TOKEN }, body })
+                .then(async r => console.log(process.env.KIND, '→', r.status, (await r.text()).slice(0, 120)))
+                .catch(e => console.error(process.env.KIND, 'falhou:', e.message));
+            "
+          done
+          sleep 8
