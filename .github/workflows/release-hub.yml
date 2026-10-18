@@ -232,9 +232,15 @@ jobs:
           if [ -z "$APP_GH_TOKEN" ]; then echo "::warning::APP_GH_TOKEN ausente — metas ignoradas."; exit 0; fi
           REL=$(ls output/*-release.apk 2>/dev/null | head -1)
           BET=$(ls output/*-beta.apk 2>/dev/null | head -1)
-          [ -n "$REL" ] || REL="$BET"
-          if [ -z "$REL" ] && [ -z "$BET" ]; then echo "::warning::Sem APK para publicar."; exit 0; fi
-          for pair in "android:$REL" "android_beta:$BET"; do
+          # v2.121.0 (correcção do padrão 148-b): SEM keystore só existe o APK
+          # debug — a meta `android` ESTÁVEL NÃO pode apontar-lhe (quebraria a
+          # actualização dos utilizadores do APK assinado: assinatura diferente).
+          # Só publica a meta estável quando existe APK -release real (keystore).
+          PAIRS=""
+          [ -n "$REL" ] && PAIRS="android:$REL"
+          [ -n "$BET" ] && PAIRS="$PAIRS android_beta:$BET"
+          if [ -z "$PAIRS" ]; then echo "::warning::Sem APK para publicar."; exit 0; fi
+          for pair in $PAIRS; do
             export KIND="${pair%%:*}"; F="${pair#*:}"
             [ -n "$F" ] && [ -f "$F" ] || { echo "::notice::sem ficheiro para kind=$KIND"; continue; }
             export F
