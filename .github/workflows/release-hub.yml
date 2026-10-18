@@ -70,7 +70,7 @@ jobs:
           # versão no package.json do repo PRIVADO (fonte da verdade)
           PKG=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/carsaimz/carsailms/contents/package.json?ref=main" \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{try{console.log(JSON.parse(Buffer.from(s,'base64').toString()).version)}catch(e){console.log('')}})")
+            | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{try{const r=JSON.parse(s);const c=Buffer.from(r.content||'','base64').toString();console.log(JSON.parse(c).version||'')}catch(e){console.log('')}})")
           echo "package.json (privado): $PKG"
           # última release PUBLICADA neste hub
           LATEST=$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" \
